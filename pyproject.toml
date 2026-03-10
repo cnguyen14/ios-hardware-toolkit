@@ -1,0 +1,9 @@
+[project]
+name = "ios-hardware-toolkit"
+version = "1.0.0"
+description = "Extract hardware info, serial numbers, and stream syslog from iOS devices via USB"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pymobiledevice3>=8.2.3",
+]
