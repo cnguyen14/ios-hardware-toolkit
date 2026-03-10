@@ -515,8 +515,8 @@ wheels = [
 ]
 
 [[package]]
-name = "ios-syslog-monitor"
-version = "0.1.0"
+name = "ios-hardware-toolkit"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pymobiledevice3" },

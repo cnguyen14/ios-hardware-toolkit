@@ -505,6 +505,35 @@ async def collect(udid: str | None = None, include_raw: bool = False) -> dict:
     }
 
     # ══════════════════════════════════════════════════
+    # 14b. CELLULAR / SIM
+    # ══════════════════════════════════════════════════
+    cellular = {}
+    for key, ld_key in [
+        ("imei", "InternationalMobileEquipmentIdentity"),
+        ("imei2", "InternationalMobileEquipmentIdentity2"),
+        ("iccid", "IntegratedCircuitCardIdentity"),
+        ("phone_number", "PhoneNumber"),
+        ("mcc", "MobileSubscriberCountryCode"),
+        ("mnc", "MobileSubscriberNetworkCode"),
+        ("sim_status", "SIMStatus"),
+        ("sim_tray", "SIMTrayStatus"),
+        ("telephony_capable", "TelephonyCapability"),
+    ]:
+        val = info.get(ld_key)
+        if val is not None:
+            cellular[key] = val
+    # Carrier info
+    carrier_arr = info.get("CarrierBundleInfoArray")
+    if carrier_arr and isinstance(carrier_arr, list) and carrier_arr:
+        c = carrier_arr[0]
+        if isinstance(c, dict):
+            cellular["carrier_name"] = c.get("CFBundleIdentifier", "").split(".")[-1]
+            cellular["carrier_version"] = c.get("CFBundleVersion")
+            cellular["imsi"] = c.get("IMSI")
+    if cellular:
+        result["cellular"] = cellular
+
+    # ══════════════════════════════════════════════════
     # 15. WIFI CHIP (centauri)
     # ══════════════════════════════════════════════════
     centauri = await _ioregistry(diag, name="centauri")
@@ -596,7 +625,240 @@ async def collect(udid: str | None = None, include_raw: bool = False) -> dict:
         }
 
     # ══════════════════════════════════════════════════
-    # 22. HARDWARE CAPABILITIES
+    # 22. SENSORS (gyro, accel, compass, barometer)
+    # ══════════════════════════════════════════════════
+    gyro = await _ioregistry(diag, name="gyro")
+    if gyro:
+        result["gyroscope"] = {
+            "device_type": decode_le_int(gyro.get("device_type")),
+            "interrupt_cal": decode_bytes(gyro.get("gyro-interrupt-calibration")),
+        }
+    accel_data = await _ioregistry(diag, name="accel")
+    if accel_data:
+        result["accelerometer"] = {
+            "device_type": decode_le_int(accel_data.get("device_type")),
+            "offset_cal": decode_bytes(accel_data.get("accel-offset-cal")),
+        }
+    compass_dt = await _ioregistry(diag, name="compass")
+    if compass_dt:
+        if "compass" not in result:
+            result["compass"] = {}
+        result["compass"]["device_type"] = decode_le_int(compass_dt.get("device_type"))
+        result["compass"]["orientation"] = decode_bytes(compass_dt.get("compass-orientation"))
+        result["compass"]["vbus_compensation"] = decode_bool(compass_dt.get("compass-vbus-compensation"))
+        result["compass"]["wallet_compensation"] = decode_bool(compass_dt.get("compass-wallet-compensation"))
+    pressure = await _ioregistry(diag, name="pressure")
+    if pressure:
+        result["barometer"] = {
+            "device_type": decode_le_int(pressure.get("device_type")),
+            "global_offset_cal": decode_bytes(pressure.get("pressure-global-offset-cal")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 23. NFC (Stockholm)
+    # ══════════════════════════════════════════════════
+    stockholm = await _ioregistry(diag, name="stockholm")
+    if stockholm:
+        result["nfc"] = {
+            "compatible": decode_bytes(stockholm.get("compatible")),
+            "reader_mode": decode_bool(stockholm.get("supports-nfc-reader-mode")),
+            "with_radio": decode_bool(stockholm.get("nfcWithRadio")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 24. NEURAL ENGINE (ANE)
+    # ══════════════════════════════════════════════════
+    ane = await _ioregistry(diag, name="ane")
+    if ane:
+        result["neural_engine"] = {
+            "type": decode_le_int(ane.get("ane-type")),
+            "compatible": decode_bytes(ane.get("compatible")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 25. IMAGE SIGNAL PROCESSOR (ISP)
+    # ══════════════════════════════════════════════════
+    isp = await _ioregistry(diag, name="isp")
+    if isp:
+        result["isp"] = {
+            "compatible": decode_bytes(isp.get("compatible")),
+            "camera_front": decode_le_int(isp.get("camera-front")),
+            "camera_rear": decode_le_int(isp.get("camera-rear")),
+            "face_detection": decode_bool(isp.get("face-detection-support")),
+            "has_sphere": decode_bool(isp.get("has-sphere")),
+            "sensor_type": decode_bytes(isp.get("sensor-type")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 26. VIDEO DECODER (AVD)
+    # ══════════════════════════════════════════════════
+    avd = await _ioregistry(diag, ioclass="AppleAVD")
+    if avd:
+        result["video_decoder"] = {
+            "compatible": decode_bytes(
+                (await _ioregistry(diag, name="avd")).get("compatible")
+            ),
+            "h264_422": avd.get("H264DecoderCanDo422"),
+            "h264_444": avd.get("H264DecoderCanDo444"),
+            "hevc": avd.get("HEVCSupported"),
+            "firmware_version": avd.get("FirmwareVersion"),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 27. VIDEO ENCODER (AVE2)
+    # ══════════════════════════════════════════════════
+    ave = await _ioregistry(diag, ioclass="AppleAVE2Driver")
+    if ave:
+        result["video_encoder"] = {
+            "h264_1080p60": ave.get("H264EncoderCanDo1080p60"),
+            "h264_4k30": ave.get("H264EncoderCanDo4k30"),
+            "hevc_4k30": ave.get("HEVCEncoderCanDo4k30"),
+            "hevc_4k60": ave.get("HEVCEncoderCanDo4k60"),
+            "h264_422": ave.get("H264EncoderCanDo422"),
+            "hevc_422": ave.get("HEVCEncoderCanDo422"),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 28. JPEG HARDWARE
+    # ══════════════════════════════════════════════════
+    jpeg_drv = await _ioregistry(diag, ioclass="AppleJPEGDriver")
+    if jpeg_drv:
+        result["jpeg_hw"] = {
+            "cores": jpeg_drv.get("AppleJPEGNumCores"),
+            "supports_12bit": jpeg_drv.get("AppleJPEGSupports12BitsFormat"),
+            "supports_dct_scaling": jpeg_drv.get("AppleJPEGSupportsDCTScaling"),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 29. MEMORY CONTROLLER (MCC)
+    # ══════════════════════════════════════════════════
+    mcc = await _ioregistry(diag, name="mcc")
+    if mcc:
+        result["memory_controller"] = {
+            "compatible": decode_bytes(mcc.get("compatible")),
+            "dcs_channels": decode_le_int(mcc.get("dcs-count-per-amcc")),
+            "channel_mask": decode_le_int(mcc.get("dcs-channel-enable-mask")),
+            "max_way_count": decode_le_int(mcc.get("max-way-count")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 30. DISPLAY COPROCESSOR (DCP)
+    # ══════════════════════════════════════════════════
+    dcp = await _ioregistry(diag, name="dcp")
+    if dcp:
+        result["display_coprocessor"] = {
+            "role": decode_bytes(dcp.get("role")),
+            "hdcp_channels": decode_le_int(dcp.get("hdcp-channels")),
+            "dp_switch": decode_bool(dcp.get("dp-switch-ufp-endpoint")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 31. ALWAYS-ON PROCESSOR (AOP)
+    # ══════════════════════════════════════════════════
+    aop = await _ioregistry(diag, name="aop")
+    if aop:
+        result["always_on_processor"] = {
+            "role": decode_bytes(aop.get("role")),
+            "aot_power": decode_bool(aop.get("aot-power")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 32. NAND STORAGE COPROCESSOR (ANS)
+    # ══════════════════════════════════════════════════
+    ans = await _ioregistry(diag, name="ans")
+    if ans:
+        result["nand_controller"] = {
+            "role": decode_bytes(ans.get("role")),
+            "phy_fw_path": decode_bytes(ans.get("msp-phy-fw-path")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 33. NVRAM OPTIONS
+    # ══════════════════════════════════════════════════
+    options = await _ioregistry(diag, name="options")
+    if options:
+        result["nvram"] = {
+            "auto_boot": decode_bytes(options.get("auto-boot")),
+            "backlight_level": decode_le_int(options.get("backlight-level")),
+            "find_my_locked": decode_bytes(options.get("fm-activation-locked")),
+            "find_my_status": decode_bytes(options.get("fm-spstatus")),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 34. BATTERY DETAILED (AppleSmartBattery)
+    # ══════════════════════════════════════════════════
+    smart_batt = await _ioregistry(diag, ioclass="AppleSmartBattery")
+    if smart_batt:
+        result["battery"]["current_capacity_pct"] = smart_batt.get("CurrentCapacity")
+        result["battery"]["absolute_capacity_mah"] = smart_batt.get("AbsoluteCapacity")
+        result["battery"]["full_charge_capacity"] = smart_batt.get("FullChargeCapacity")
+        result["battery"]["is_charging"] = smart_batt.get("IsCharging")
+        result["battery"]["amperage_ma"] = smart_batt.get("Amperage")
+        result["battery"]["external_connected"] = smart_batt.get("ExternalConnected")
+        result["battery"]["fully_charged"] = smart_batt.get("FullyCharged")
+        result["battery"]["max_capacity_pct"] = smart_batt.get("MaxCapacity")
+        # Adapter details
+        adapter = smart_batt.get("AdapterDetails")
+        if isinstance(adapter, dict):
+            result["battery"]["adapter_watts"] = adapter.get("Watts")
+            result["battery"]["adapter_voltage"] = adapter.get("AdapterVoltage")
+            result["battery"]["adapter_current"] = adapter.get("Current")
+
+    # ══════════════════════════════════════════════════
+    # 35. DEVICE SECURITY (CredentialManager)
+    # ══════════════════════════════════════════════════
+    cred = await _ioregistry(diag, ioclass="AppleCredentialManager")
+    if cred:
+        result["device_security"] = {
+            "device_locked": cred.get("TRM_DeviceLocked"),
+            "policy_timeout": cred.get("TRM_PolicyTimeout"),
+            "grace_period": cred.get("TRM_GracePeriodTimeout"),
+            "has_sidp": info.get("HasSiDP"),
+            "activation_state": info.get("ActivationState"),
+            "production_soc": info.get("ProductionSOC"),
+            "firmware_version": info.get("FirmwareVersion"),
+        }
+
+    # ══════════════════════════════════════════════════
+    # 36. DISK USAGE
+    # ══════════════════════════════════════════════════
+    try:
+        lockdown_du = await create_using_usbmux(serial=udid)
+        du = await lockdown_du.get_value(domain="com.apple.disk_usage.factory")
+        if du and isinstance(du, dict):
+            to_gb = lambda b: round(b / (1024**3), 2) if isinstance(b, (int, float)) else b
+            result["disk_usage"] = {
+                "total_disk_gb": to_gb(du.get("TotalDiskCapacity")),
+                "total_data_capacity_gb": to_gb(du.get("TotalDataCapacity")),
+                "data_available_gb": to_gb(du.get("AmountDataAvailable")),
+                "system_capacity_gb": to_gb(du.get("TotalSystemCapacity")),
+                "camera_usage_gb": to_gb(du.get("CameraUsage")),
+                "photo_usage_gb": to_gb(du.get("PhotoUsage")),
+                "calendar_usage_mb": round(du.get("CalendarUsage", 0) / (1024**2), 2) if du.get("CalendarUsage") else None,
+            }
+    except Exception:
+        pass
+
+    # ══════════════════════════════════════════════════
+    # 37. SOFTWARE BEHAVIOR (region flags)
+    # ══════════════════════════════════════════════════
+    try:
+        lockdown_sb = await create_using_usbmux(serial=udid)
+        sb = await lockdown_sb.get_value(domain="com.apple.mobile.software_behavior")
+        if sb and isinstance(sb, dict):
+            result["region_flags"] = {
+                "china_brick": sb.get("ChinaBrick"),
+                "shutter_click_forced": sb.get("ShutterClick"),
+                "volume_limit": sb.get("VolumeLimit"),
+                "ntsc": sb.get("NTSC"),
+                "no_voip": sb.get("NoVOIP"),
+                "no_wifi": sb.get("NoWiFi"),
+            }
+    except Exception:
+        pass
+
+    # ══════════════════════════════════════════════════
+    # 38. HARDWARE CAPABILITIES
     # ══════════════════════════════════════════════════
     capability_keys = {
         "builtin_battery": "builtin-battery",
